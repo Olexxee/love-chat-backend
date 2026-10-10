@@ -1,0 +1,60 @@
+from fastapi import APIRouter, Depends, status
+from sqlalchemy.orm import Session
+
+from app.core.security import get_current_user
+from app.db.database import get_db
+from app.db.models import User
+from app.schemas.relationship import (
+    CreateRelationshipRequest,
+    RelationshipResponse,
+)
+from app.services.relationship import (
+    create_relationship,
+    get_relationship_by_id,
+    list_relationships,
+)
+
+router = APIRouter(
+    prefix="/api/relationships",
+    tags=["Relationships"],
+)
+
+
+@router.post(
+    "",
+    response_model=RelationshipResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_relationship_route(
+    data: CreateRelationshipRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return create_relationship(db, current_user, data)
+
+
+@router.get(
+    "",
+    response_model=list[RelationshipResponse],
+)
+def list_relationships_route(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return list_relationships(db, current_user)
+
+
+@router.get(
+    "/{relationship_id}",
+    response_model=RelationshipResponse,
+)
+def get_relationship_route(
+    relationship_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return get_relationship_by_id(
+        db,
+        current_user,
+        relationship_id,
+    )
