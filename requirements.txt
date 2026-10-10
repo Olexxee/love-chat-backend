@@ -10,3 +10,4 @@ bcrypt
 cloudinary
 pydantic[email]
 psycopg[binary]
+PyJWT
