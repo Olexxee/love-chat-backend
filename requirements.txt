@@ -9,3 +9,4 @@ passlib[bcrypt]
 bcrypt
 cloudinary
 pydantic[email]
+psycopg[binary]
