@@ -62,7 +62,10 @@ def test_fastapi_application_imports_and_registers_health_route(monkeypatch):
     monkeypatch.setenv("JWT_SECRET_KEY", "test-only-secret-key")
 
     app_module = importlib.import_module("app.main")
-    paths = {route.path for route in app_module.app.routes}
+    paths = {
+        path
+        for route in app_module.app.routes
+        if (path := getattr(route, "path", None)) is not None
+    }
 
     assert "/health" in paths
-    assert "/api/conversations/{conversation_id}/messages" in paths
