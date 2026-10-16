@@ -152,7 +152,12 @@ async def chat_websocket(
                     [user.id, partner.id],
                     {
                         "type": "message",
-                        "message": message,
+                        "event_id": message.get("event_id"),
+                        "message": {
+                            key: value
+                            for key, value in message.items()
+                            if key != "event_id"
+                        },
                         "client_message_id": message["client_message_id"],
                     },
                     conversation_id=conversation.id,
@@ -181,6 +186,7 @@ async def chat_websocket(
                     [user.id, partner.id],
                     {
                         "type": "message_deleted",
+                        "event_id": deleted_message.get("event_id"),
                         "message_id": deleted_message["id"],
                         "conversation_id": conversation.id,
                         "deleted_at": deleted_message["deleted_at"],
@@ -223,6 +229,7 @@ async def chat_websocket(
                     [user.id, partner.id],
                     {
                         "type": "message_read",
+                        "event_id": message.get("event_id"),
                         "message_id": message["id"],
                         "reader_id": user.id,
                         "read_at": (
