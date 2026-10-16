@@ -11,7 +11,7 @@ FastAPI backend for the private two-person LoveChat app.
 
 ## Alembic migration baseline reset
 
-The revision history was intentionally reset. The repository now contains one baseline revision at `migrations/versions/20261016_0001_initial_schema.py`, describing the current SQLAlchemy models.
+The revision history was intentionally reset. The repository contains an initial schema baseline (`20261016_0001`) plus an additive delivery-event migration (`20261016_0002`). The baseline describes the core schema before durable event recovery; the second revision creates `delivery_events`.
 
 ### New, empty database
 
@@ -33,10 +33,10 @@ This creates the current schema and records the baseline revision.
 4. Only if the live schema already matches the baseline, run:
 
    ```bash
-   alembic stamp head
+   alembic stamp 20261016_0001
    ```
 
-5. If it does not match, write and apply a reconciliation migration for the exact differences before stamping the baseline.
+5. After stamping only `20261016_0001`, run `alembic upgrade head` to create the new `delivery_events` table. If the existing schema does not match the baseline, write and apply a reconciliation migration for the exact differences before stamping the baseline.
 
 Do not drop production tables or remove columns merely to make a migration pass. A `DuplicateColumn` error means the database and migration assumptions differ; it does not mean the existing column should be deleted.
 
@@ -46,4 +46,6 @@ Do not drop production tables or remove columns merely to make a migration pass.
 - Relationship creation, lookup, listing, and ending
 - Image avatar and chat-attachment uploads through Cloudinary
 - REST and WebSocket messaging, replies, idempotency keys, read receipts, soft deletion, and attachment serialization
+- Keyset-paginated history: `GET /api/conversations/{conversation_id}/messages?limit=50&before_id=<oldest_message_id>`
+- Durable conversation event replay: `GET /api/conversations/{conversation_id}/events?after_id=<last_event_id>&limit=100`; persist the highest processed event ID on the client and replay after reconnect
 - Alembic schema migrations
