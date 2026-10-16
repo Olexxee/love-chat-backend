@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, Response, status
+import jwt
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -7,6 +8,7 @@ from app.core.security import (
     REFRESH_TOKEN_COOKIE,
     create_access_token,
     create_refresh_token,
+    decode_token,
     get_current_user,
 )
 from app.db.database import get_db
@@ -122,6 +124,51 @@ def login(
         refresh_token,
     )
 
+    return serialize_user(db, user)
+
+
+@router.post("/refresh", response_model=UserResponse)
+def refresh_session(
+    response: Response,
+    refresh_token: str | None = Cookie(default=None, alias=REFRESH_TOKEN_COOKIE),
+    db: Session = Depends(get_db),
+):
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token is missing.",
+        )
+
+    try:
+        payload = decode_token(refresh_token)
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token is invalid or expired.",
+        ) from exc
+
+    if payload.get("type") != "refresh":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token.",
+        )
+
+    try:
+        user_id = int(payload.get("sub", ""))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token.",
+        ) from exc
+
+    user = db.scalar(select(User).where(User.id == user_id))
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User is unavailable or inactive.",
+        )
+
+    set_auth_cookies(response, create_access_token(user.id), create_refresh_token(user.id))
     return serialize_user(db, user)
 
 
