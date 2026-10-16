@@ -6,7 +6,14 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.models import DeliveryEvent, MediaAsset, Message, MessageAttachment, User
+from app.db.models import (
+    Conversation,
+    DeliveryEvent,
+    MediaAsset,
+    Message,
+    MessageAttachment,
+    User,
+)
 from app.services.relationship import get_authorized_conversation
 
 
@@ -84,6 +91,13 @@ def _record_delivery_event(
     payload: dict,
     message_id: int | None = None,
 ) -> int:
+    # Serialize event ID allocation per conversation. On PostgreSQL, the row
+    # lock makes committed event IDs a safe monotonically increasing cursor.
+    db.scalar(
+        select(Conversation)
+        .where(Conversation.id == conversation_id)
+        .with_for_update()
+    )
     event = DeliveryEvent(
         conversation_id=conversation_id,
         actor_id=actor_id,
