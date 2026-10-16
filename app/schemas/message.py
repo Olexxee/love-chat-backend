@@ -48,6 +48,8 @@ class MessageResponse(BaseModel):
 
 
 class DeliveryEventResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     conversation_id: int
     actor_id: int
