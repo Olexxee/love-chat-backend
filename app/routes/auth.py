@@ -168,7 +168,11 @@ def refresh_session(
             detail="User is unavailable or inactive.",
         )
 
-    set_auth_cookies(response, create_access_token(user.id), create_refresh_token(user.id))
+    set_auth_cookies(
+        response,
+        create_access_token(user.id),
+        create_refresh_token(user.id),
+    )
     return serialize_user(db, user)
 
 
