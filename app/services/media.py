@@ -69,6 +69,23 @@ def upload_image(
             detail="Only JPG, PNG, and WebP images are supported.",
         )
 
+    # Do not trust the filename extension; verify the actual file signature.
+    signatures = {
+        "jpg": file_bytes.startswith(b"\\xff\\xd8\\xff"),
+        "jpeg": file_bytes.startswith(b"\\xff\\xd8\\xff"),
+        "png": file_bytes.startswith(b"\\x89PNG\\r\\n\\x1a\\n"),
+        "webp": (
+            len(file_bytes) >= 12
+            and file_bytes.startswith(b"RIFF")
+            and file_bytes[8:12] == b"WEBP"
+        ),
+    }
+    if not signatures[extension]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The file content does not match a supported image format.",
+        )
+
     configure_cloudinary()
 
     folder = (
