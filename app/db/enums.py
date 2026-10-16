@@ -9,8 +9,10 @@ class RelationshipType(str, Enum):
 
 
 class RelationshipStatus(str, Enum):
+    PENDING = "PENDING"
     ACTIVE = "ACTIVE"
     PAUSED = "PAUSED"
+    DECLINED = "DECLINED"
     ENDED = "ENDED"
 
 

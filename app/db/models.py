@@ -229,6 +229,12 @@ class Relationship(Base):
         index=True,
     )
 
+    requested_by_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+
     relationship_type: Mapped[str] = mapped_column(
         String(20),
         default=RelationshipType.ROMANTIC.value,
@@ -237,7 +243,7 @@ class Relationship(Base):
 
     status: Mapped[str] = mapped_column(
         String(20),
-        default=RelationshipStatus.ACTIVE.value,
+        default=RelationshipStatus.PENDING.value,
         nullable=False,
         index=True,
     )
@@ -246,6 +252,16 @@ class Relationship(Base):
         DateTime(timezone=True),
         default=utc_now,
         nullable=False,
+    )
+
+    responded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    declined_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     __table_args__ = (
@@ -258,6 +274,10 @@ class Relationship(Base):
             "user_one_id <> user_two_id",
             name="ck_relationship_users_different",
         ),
+        CheckConstraint(
+            "requested_by_id IN (user_one_id, user_two_id)",
+            name="ck_relationship_requester_is_member",
+        ),
         Index(
             "ix_relationship_user_one_status",
             "user_one_id",
@@ -266,6 +286,11 @@ class Relationship(Base):
         Index(
             "ix_relationship_user_two_status",
             "user_two_id",
+            "status",
+        ),
+        Index(
+            "ix_relationship_requested_by_status",
+            "requested_by_id",
             "status",
         ),
     )
@@ -316,6 +341,12 @@ class Message(Base):
     sender_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"),
         nullable=False,
+        index=True,
+    )
+
+    reply_to_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
 

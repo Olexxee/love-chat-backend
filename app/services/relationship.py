@@ -2,6 +2,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.db.enums import RelationshipStatus, RelationshipType
 from app.db.models import (
     Conversation,
     MediaAsset,
@@ -126,18 +127,35 @@ def create_relationship(
         )
     )
 
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A relationship already exists between these users.",
-        )
+    # ---- NEW: reactivate an ENDED relationship instead of 409-ing ----
+    if existing is not None:
+        if existing.status != RelationshipStatus.ENDED.value:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A relationship already exists between these users.",
+            )
+
+        existing.status = RelationshipStatus.ACTIVE.value
+        existing.relationship_type = data.relationship_type.value
+
+        try:
+            result = _serialize_relationship(db, existing, current_user)
+            db.commit()
+            return result
+        except HTTPException:
+            db.rollback()
+            raise
+        except Exception:
+            db.rollback()
+            raise
 
     try:
         relationship = Relationship(
             user_one_id=user_one_id,
             user_two_id=user_two_id,
             relationship_type=data.relationship_type.value,
-            status="ACTIVE",
+            # ---- NEW: use the enum, not a hardcoded string ----
+            status=RelationshipStatus.ACTIVE.value,
         )
 
         db.add(relationship)
@@ -247,7 +265,7 @@ def get_conversation_for_relationship(
                 Relationship.user_one_id == current_user.id,
                 Relationship.user_two_id == current_user.id,
             ),
-            Relationship.status == "ACTIVE",
+            Relationship.status == RelationshipStatus.ACTIVE.value,
         )
     )
 
@@ -283,7 +301,7 @@ def get_authorized_conversation(
         )
         .where(
             Conversation.id == conversation_id,
-            Relationship.status == "ACTIVE",
+            Relationship.status == RelationshipStatus.ACTIVE.value,
             or_(
                 Relationship.user_one_id == current_user.id,
                 Relationship.user_two_id == current_user.id,
@@ -306,3 +324,37 @@ def get_authorized_conversation(
     )
 
     return conversation, relationship, partner
+
+
+# ---- NEW: end (soft-delete) a relationship ----
+def end_relationship(
+    db: Session,
+    current_user: User,
+    relationship_id: int,
+) -> None:
+    relationship = db.scalar(
+        select(Relationship).where(
+            Relationship.id == relationship_id,
+            or_(
+                Relationship.user_one_id == current_user.id,
+                Relationship.user_two_id == current_user.id,
+            ),
+        )
+    )
+
+    if relationship is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Relationship not found.",
+        )
+
+    # Idempotent — hitting DELETE twice is fine.
+    if relationship.status == RelationshipStatus.ENDED.value:
+        return
+
+    try:
+        relationship.status = RelationshipStatus.ENDED.value
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise

@@ -10,22 +10,56 @@ from app.services.relationship import get_authorized_conversation
 
 
 def _serialize_message(db: Session, message: Message) -> dict:
-    attachment_rows = db.execute(
-        select(MessageAttachment, MediaAsset)
-        .join(MediaAsset, MessageAttachment.media_asset_id == MediaAsset.id)
-        .where(MessageAttachment.message_id == message.id)
-        .order_by(MessageAttachment.id.asc())
-    ).all()
+    is_deleted = message.deleted_at is not None
+
+    attachment_rows = []
+
+    if not is_deleted:
+        attachment_rows = db.execute(
+            select(MessageAttachment, MediaAsset)
+            .join(MediaAsset, MessageAttachment.media_asset_id == MediaAsset.id)
+            .where(MessageAttachment.message_id == message.id)
+            .order_by(MessageAttachment.id.asc())
+        ).all()
+
+    reply_to = None
+
+    if message.reply_to_message_id is not None:
+        original = db.get(Message, message.reply_to_message_id)
+
+        if original is not None:
+            original_deleted = original.deleted_at is not None
+
+            reply_to = {
+                "id": original.id,
+                "sender_id": original.sender_id,
+                "content": (
+                    "This message was deleted" if original_deleted else original.content
+                ),
+                "deleted_at": original.deleted_at,
+                "has_attachments": (
+                    False
+                    if original_deleted
+                    else db.scalar(
+                        select(MessageAttachment.id)
+                        .where(MessageAttachment.message_id == original.id)
+                        .limit(1)
+                    )
+                    is not None
+                ),
+            }
 
     return {
         "id": message.id,
         "conversation_id": message.conversation_id,
         "sender_id": message.sender_id,
         "client_message_id": message.client_message_id,
-        "content": message.content,
+        "content": "" if is_deleted else message.content,
         "created_at": message.created_at,
         "read_at": message.read_at,
         "deleted_at": message.deleted_at,
+        "reply_to_message_id": message.reply_to_message_id,
+        "reply_to": reply_to,
         "attachments": [
             {
                 "id": attachment.id,
@@ -62,6 +96,7 @@ def send_message(
     content: str,
     attachment_ids: list[int] | None = None,
     client_message_id: str | None = None,
+    reply_to_message_id: int | None = None,
 ) -> dict:
     conversation, _, _ = get_authorized_conversation(
         db,
@@ -90,6 +125,19 @@ def send_message(
 
         if existing is not None:
             return _serialize_message(db, existing)
+
+    if reply_to_message_id is not None:
+        original = db.get(Message, reply_to_message_id)
+
+        if (
+            original is None
+            or original.conversation_id != conversation.id
+            or original.deleted_at is not None
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="The message you are replying to is unavailable.",
+            )
 
     if len(attachment_ids) > 5:
         raise HTTPException(
@@ -134,7 +182,9 @@ def send_message(
             sender_id=current_user.id,
             client_message_id=client_message_id,
             content=content,
+            reply_to_message_id=reply_to_message_id,
         )
+
         db.add(message)
         db.flush()
 
@@ -154,7 +204,6 @@ def send_message(
     except IntegrityError:
         db.rollback()
 
-        # A concurrent retry may have inserted this same message first.
         if client_message_id is not None:
             existing = _find_by_client_message_id(
                 db,
@@ -186,10 +235,7 @@ def get_messages(
 
     messages = db.scalars(
         select(Message)
-        .where(
-            Message.conversation_id == conversation.id,
-            Message.deleted_at.is_(None),
-        )
+        .where(Message.conversation_id == conversation.id)
         .order_by(Message.created_at.asc(), Message.id.asc())
     ).all()
 

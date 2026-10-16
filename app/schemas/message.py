@@ -1,38 +1,323 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.db.models import MediaAsset, Message, MessageAttachment, User
+from app.services.relationship import get_authorized_conversation
 
 
-class CreateMessageRequest(BaseModel):
-    content: str = Field(default="", max_length=5000)
-    attachment_ids: list[int] = Field(default_factory=list, max_length=5)
-    client_message_id: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=36,
+def _serialize_message(db: Session, message: Message) -> dict:
+    is_deleted = message.deleted_at is not None
+
+    attachment_rows = []
+
+    if not is_deleted:
+        attachment_rows = db.execute(
+            select(MessageAttachment, MediaAsset)
+            .join(
+                MediaAsset,
+                MessageAttachment.media_asset_id == MediaAsset.id,
+            )
+            .where(MessageAttachment.message_id == message.id)
+            .order_by(MessageAttachment.id.asc())
+        ).all()
+
+    reply_to = None
+
+    if message.reply_to_message_id is not None:
+        original = db.get(Message, message.reply_to_message_id)
+
+        if original is not None:
+            original_deleted = original.deleted_at is not None
+
+            has_attachments = False
+
+            if not original_deleted:
+                has_attachments = (
+                    db.scalar(
+                        select(MessageAttachment.id)
+                        .where(
+                            MessageAttachment.message_id == original.id,
+                        )
+                        .limit(1)
+                    )
+                    is not None
+                )
+
+            reply_to = {
+                "id": original.id,
+                "sender_id": original.sender_id,
+                "content": (
+                    "This message was deleted" if original_deleted else original.content
+                ),
+                "deleted_at": original.deleted_at,
+                "has_attachments": has_attachments,
+            }
+
+    return {
+        "id": message.id,
+        "conversation_id": message.conversation_id,
+        "sender_id": message.sender_id,
+        "client_message_id": message.client_message_id,
+        "content": "" if is_deleted else message.content,
+        "created_at": message.created_at,
+        "read_at": message.read_at,
+        "deleted_at": message.deleted_at,
+        "reply_to_message_id": message.reply_to_message_id,
+        "reply_to": reply_to,
+        "attachments": [
+            {
+                "id": attachment.id,
+                "media_asset_id": asset.id,
+                "secure_url": asset.secure_url,
+                "format": asset.format,
+                "width": asset.width,
+                "height": asset.height,
+            }
+            for attachment, asset in attachment_rows
+        ],
+    }
+
+
+def _find_by_client_message_id(
+    db: Session,
+    conversation_id: int,
+    sender_id: int,
+    client_message_id: str,
+) -> Message | None:
+    return db.scalar(
+        select(Message).where(
+            Message.conversation_id == conversation_id,
+            Message.sender_id == sender_id,
+            Message.client_message_id == client_message_id,
+        )
     )
 
 
-class MessageAttachmentResponse(BaseModel):
-    id: int
-    media_asset_id: int
-    secure_url: str
-    format: str | None = None
-    width: int | None = None
-    height: int | None = None
+def send_message(
+    db: Session,
+    current_user: User,
+    conversation_id: int,
+    content: str,
+    attachment_ids: list[int] | None = None,
+    client_message_id: str | None = None,
+    reply_to_message_id: int | None = None,
+) -> dict:
+    conversation, _, _ = get_authorized_conversation(
+        db,
+        current_user,
+        conversation_id,
+    )
 
-    model_config = ConfigDict(from_attributes=True)
+    content = content.strip()
+    attachment_ids = attachment_ids or []
+
+    if client_message_id is not None:
+        client_message_id = client_message_id.strip()
+
+        if not client_message_id or len(client_message_id) > 36:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "client_message_id must contain between " "1 and 36 characters."
+                ),
+            )
+
+        existing = _find_by_client_message_id(
+            db,
+            conversation.id,
+            current_user.id,
+            client_message_id,
+        )
+
+        if existing is not None:
+            return _serialize_message(db, existing)
+
+    if reply_to_message_id is not None:
+        original = db.get(Message, reply_to_message_id)
+
+        if (
+            original is None
+            or original.conversation_id != conversation.id
+            or original.deleted_at is not None
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="The message you are replying to is unavailable.",
+            )
+
+    if len(attachment_ids) > 5:
+        raise HTTPException(
+            status_code=400,
+            detail="A message can contain at most five attachments.",
+        )
+
+    if len(attachment_ids) != len(set(attachment_ids)):
+        raise HTTPException(
+            status_code=400,
+            detail="Duplicate attachment IDs are not allowed.",
+        )
+
+    if not content and not attachment_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=("A message must contain text or at least one attachment."),
+        )
+
+    try:
+        if attachment_ids:
+            assets = db.scalars(
+                select(MediaAsset).where(
+                    MediaAsset.id.in_(attachment_ids),
+                    MediaAsset.owner_id == current_user.id,
+                    MediaAsset.purpose == "CHAT_ATTACHMENT",
+                    MediaAsset.resource_type == "IMAGE",
+                    MediaAsset.deleted_at.is_(None),
+                )
+            ).all()
+
+            assets_by_id = {asset.id: asset for asset in assets}
+
+            if len(assets_by_id) != len(attachment_ids):
+                raise HTTPException(
+                    status_code=400,
+                    detail=("One or more attachments are invalid or unavailable."),
+                )
+
+        message = Message(
+            conversation_id=conversation.id,
+            sender_id=current_user.id,
+            client_message_id=client_message_id,
+            content=content,
+            reply_to_message_id=reply_to_message_id,
+        )
+
+        db.add(message)
+        db.flush()
+
+        for asset_id in attachment_ids:
+            db.add(
+                MessageAttachment(
+                    message_id=message.id,
+                    media_asset_id=asset_id,
+                )
+            )
+
+        db.flush()
+        result = _serialize_message(db, message)
+
+        db.commit()
+
+        return result
+
+    except IntegrityError:
+        db.rollback()
+
+        if client_message_id is not None:
+            existing = _find_by_client_message_id(
+                db,
+                conversation.id,
+                current_user.id,
+                client_message_id,
+            )
+
+            if existing is not None:
+                return _serialize_message(db, existing)
+
+        raise
+
+    except Exception:
+        db.rollback()
+        raise
 
 
-class MessageResponse(BaseModel):
-    id: int
-    conversation_id: int
-    sender_id: int
-    client_message_id: str | None = None
-    content: str
-    created_at: datetime
-    read_at: datetime | None
-    deleted_at: datetime | None
-    attachments: list[MessageAttachmentResponse] = Field(default_factory=list)
+def get_messages(
+    db: Session,
+    current_user: User,
+    conversation_id: int,
+) -> list[dict]:
+    conversation, _, _ = get_authorized_conversation(
+        db,
+        current_user,
+        conversation_id,
+    )
 
-    model_config = ConfigDict(from_attributes=True)
+    messages = db.scalars(
+        select(Message)
+        .where(Message.conversation_id == conversation.id)
+        .order_by(
+            Message.created_at.asc(),
+            Message.id.asc(),
+        )
+    ).all()
+
+    return [_serialize_message(db, message) for message in messages]
+
+
+def mark_message_as_read(
+    db: Session,
+    current_user: User,
+    message_id: int,
+) -> dict:
+    message = db.get(Message, message_id)
+
+    if message is None or message.deleted_at is not None:
+        raise HTTPException(
+            status_code=404,
+            detail="Message not found.",
+        )
+
+    get_authorized_conversation(
+        db,
+        current_user,
+        message.conversation_id,
+    )
+
+    if message.sender_id == current_user.id:
+        raise HTTPException(
+            status_code=400,
+            detail="You cannot mark your own messages as read.",
+        )
+
+    if message.read_at is None:
+        message.read_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(message)
+
+    return _serialize_message(db, message)
+
+
+def delete_message(
+    db: Session,
+    current_user: User,
+    message_id: int,
+) -> dict:
+    message = db.get(Message, message_id)
+
+    if message is None or message.deleted_at is not None:
+        raise HTTPException(
+            status_code=404,
+            detail="Message not found.",
+        )
+
+    get_authorized_conversation(
+        db,
+        current_user,
+        message.conversation_id,
+    )
+
+    if message.sender_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only delete your own messages.",
+        )
+
+    message.deleted_at = datetime.now(timezone.utc)
+
+    db.commit()
+    db.refresh(message)
+
+    return _serialize_message(db, message)

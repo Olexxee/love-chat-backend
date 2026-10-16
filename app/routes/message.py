@@ -1,10 +1,9 @@
-
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.security import get_current_user
 from app.db.database import get_db
-from app.db.models import User
+from app.db.models import Message, User
 from app.schemas.message import CreateMessageRequest, MessageResponse
 from app.services.message import (
     delete_message,
@@ -29,7 +28,7 @@ async def send_message_route(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _, _, partner = get_authorized_conversation(
+    conversation, _, partner = get_authorized_conversation(
         db,
         current_user,
         conversation_id,
@@ -42,6 +41,7 @@ async def send_message_route(
         data.content,
         data.attachment_ids,
         data.client_message_id,
+        data.reply_to_message_id,
     )
 
     await manager.send_to_users(
@@ -49,8 +49,9 @@ async def send_message_route(
         {
             "type": "message",
             "message": message,
+            "client_message_id": message["client_message_id"],
         },
-        conversation_id=conversation_id,
+        conversation_id=conversation.id,
     )
 
     return message
@@ -65,28 +66,69 @@ def get_messages_route(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return get_messages(db, current_user, conversation_id)
+    return get_messages(
+        db,
+        current_user,
+        conversation_id,
+    )
 
 
 @router.patch(
     "/api/messages/{message_id}/read",
     response_model=MessageResponse,
 )
+
+
 def mark_message_as_read_route(
     message_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return mark_message_as_read(db, current_user, message_id)
+    return mark_message_as_read(
+        db,
+        current_user,
+        message_id,
+    )
 
 
 @router.delete(
     "/api/messages/{message_id}",
     response_model=MessageResponse,
 )
-def delete_message_route(
+async def delete_message_route(
     message_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return delete_message(db, current_user, message_id)
+    existing = db.get(Message, message_id)
+
+    if existing is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Message not found.",
+        )
+
+    conversation, _, partner = get_authorized_conversation(
+        db,
+        current_user,
+        existing.conversation_id,
+    )
+
+    message = delete_message(
+        db,
+        current_user,
+        message_id,
+    )
+
+    await manager.send_to_users(
+        [current_user.id, partner.id],
+        {
+            "type": "message_deleted",
+            "message_id": message["id"],
+            "conversation_id": conversation.id,
+            "deleted_at": message["deleted_at"],
+        },
+        conversation_id=conversation.id,
+    )
+
+    return message

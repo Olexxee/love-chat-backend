@@ -4,7 +4,11 @@ from fastapi.concurrency import run_in_threadpool
 from app.core.websocket import authenticate_websocket
 from app.db.database import SessionLocal
 from app.db.models import User
-from app.services.message import mark_message_as_read, send_message
+from app.services.message import (
+    delete_message,
+    mark_message_as_read,
+    send_message,
+)
 from app.services.relationship import get_authorized_conversation
 from app.services.websocket import manager
 
@@ -22,8 +26,11 @@ async def chat_websocket(
     connected = False
 
     try:
-        # Sync DB work off the event loop — otherwise the handshake can hang.
-        user = await run_in_threadpool(authenticate_websocket, websocket, db)
+        user = await run_in_threadpool(
+            authenticate_websocket,
+            websocket,
+            db,
+        )
 
         conversation, _, partner = await run_in_threadpool(
             get_authorized_conversation,
@@ -73,6 +80,7 @@ async def chat_websocket(
                 content = data.get("content", "")
                 attachment_ids = data.get("attachment_ids", [])
                 client_message_id = data.get("client_message_id")
+                reply_to_message_id = data.get("reply_to_message_id")
 
                 if not isinstance(content, str):
                     await websocket.send_json(
@@ -89,7 +97,9 @@ async def chat_websocket(
                     await websocket.send_json(
                         {
                             "type": "error",
-                            "message": "attachment_ids must be a list of positive integers",
+                            "message": (
+                                "attachment_ids must be a list " "of positive integers"
+                            ),
                         }
                     )
                     continue
@@ -102,7 +112,23 @@ async def chat_websocket(
                     await websocket.send_json(
                         {
                             "type": "error",
-                            "message": "client_message_id must be a string containing 1 to 36 characters",
+                            "message": (
+                                "client_message_id must be a string "
+                                "containing 1 to 36 characters"
+                            ),
+                        }
+                    )
+                    continue
+
+                if reply_to_message_id is not None and (
+                    type(reply_to_message_id) is not int or reply_to_message_id <= 0
+                ):
+                    await websocket.send_json(
+                        {
+                            "type": "error",
+                            "message": (
+                                "reply_to_message_id must be " "a positive integer"
+                            ),
                         }
                     )
                     continue
@@ -115,6 +141,7 @@ async def chat_websocket(
                     content,
                     attachment_ids,
                     client_message_id,
+                    reply_to_message_id,
                 )
 
                 await manager.send_to_users(
@@ -122,7 +149,37 @@ async def chat_websocket(
                     {
                         "type": "message",
                         "message": message,
-                        "client_message_id": client_message_id,
+                        "client_message_id": message["client_message_id"],
+                    },
+                    conversation_id=conversation.id,
+                )
+
+            elif message_type == "delete":
+                message_id = data.get("message_id")
+
+                if type(message_id) is not int or message_id <= 0:
+                    await websocket.send_json(
+                        {
+                            "type": "error",
+                            "message": "message_id must be a positive integer",
+                        }
+                    )
+                    continue
+
+                deleted_message = await run_in_threadpool(
+                    delete_message,
+                    db,
+                    user,
+                    message_id,
+                )
+
+                await manager.send_to_users(
+                    [user.id, partner.id],
+                    {
+                        "type": "message_deleted",
+                        "message_id": deleted_message["id"],
+                        "conversation_id": conversation.id,
+                        "deleted_at": deleted_message["deleted_at"],
                     },
                     conversation_id=conversation.id,
                 )
