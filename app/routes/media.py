@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.core.security import get_current_user
@@ -16,9 +16,18 @@ router = APIRouter(
 )
 
 
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+
+
 async def read_upload(file: UploadFile) -> bytes:
     try:
-        return await file.read()
+        content = await file.read(MAX_UPLOAD_BYTES + 1)
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail="Images cannot exceed 5 MB.",
+            )
+        return content
     finally:
         await file.close()
 
