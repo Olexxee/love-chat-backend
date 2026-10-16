@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 
@@ -11,6 +13,8 @@ from app.services.message import (
 )
 from app.services.relationship import get_authorized_conversation
 from app.services.websocket import manager
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["WebSocket"])
 
@@ -255,6 +259,24 @@ async def chat_websocket(
                     "message": exc.detail,
                 }
             )
+
+    except Exception:
+        db.rollback()
+        logger.exception(
+            "Unexpected WebSocket processing failure for user_id=%s conversation_id=%s",
+            user.id if user else None,
+            conversation_id,
+        )
+        if connected:
+            try:
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "message": "The request could not be completed. Please retry.",
+                    }
+                )
+            except Exception:
+                pass
 
     finally:
         if connected and user:
