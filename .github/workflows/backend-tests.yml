@@ -20,6 +20,12 @@ jobs:
           cache-dependency-path: requirements-dev.txt
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
+      - name: Validate clean-database migration
+        env:
+          DATABASE_URL: sqlite:///./lovechat-migration-test.db
+          JWT_SECRET_KEY: test-only-secret-key
+          PYTHONPATH: .
+        run: alembic upgrade head
       - name: Run tests
         env:
           DATABASE_URL: sqlite:///./lovechat-test.db
