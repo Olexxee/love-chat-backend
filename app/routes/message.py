@@ -115,7 +115,7 @@ def get_delivery_events_route(
 )
 
 
-def mark_message_as_read_route(
+async def mark_message_as_read_route(
     message_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
