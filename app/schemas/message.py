@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -31,6 +33,7 @@ class ReplyToMessageResponse(BaseModel):
 
 class MessageResponse(BaseModel):
     id: int
+    event_id: int | None = None
     conversation_id: int
     sender_id: int
     client_message_id: str | None = None
@@ -41,3 +44,14 @@ class MessageResponse(BaseModel):
     reply_to_message_id: int | None = None
     reply_to: ReplyToMessageResponse | None = None
     attachments: list[MessageAttachmentResponse] = Field(default_factory=list)
+
+
+
+class DeliveryEventResponse(BaseModel):
+    id: int
+    conversation_id: int
+    actor_id: int
+    message_id: int | None = None
+    event_type: str
+    payload: dict[str, Any]
+    created_at: datetime
