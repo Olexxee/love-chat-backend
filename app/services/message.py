@@ -177,9 +177,22 @@ def send_message(
 
         if existing is not None:
             result = _serialize_message(db, existing)
-            result["event_id"] = _event_id_for_message(
-                db, existing.id, "message"
-            )
+            event_id = _event_id_for_message(db, existing.id, "message")
+            if event_id is None:
+                event_id = _record_delivery_event(
+                    db,
+                    conversation_id=conversation.id,
+                    actor_id=current_user.id,
+                    event_type="message",
+                    message_id=existing.id,
+                    payload={
+                        "type": "message",
+                        "message": result,
+                        "client_message_id": result["client_message_id"],
+                    },
+                )
+                db.commit()
+            result["event_id"] = event_id
             return result
 
     if reply_to_message_id is not None:
@@ -283,9 +296,22 @@ def send_message(
 
             if existing is not None:
                 result = _serialize_message(db, existing)
-                result["event_id"] = _event_id_for_message(
-                    db, existing.id, "message"
-                )
+                event_id = _event_id_for_message(db, existing.id, "message")
+                if event_id is None:
+                    event_id = _record_delivery_event(
+                        db,
+                        conversation_id=conversation.id,
+                        actor_id=current_user.id,
+                        event_type="message",
+                        message_id=existing.id,
+                        payload={
+                            "type": "message",
+                            "message": result,
+                            "client_message_id": result["client_message_id"],
+                        },
+                    )
+                    db.commit()
+                result["event_id"] = event_id
                 return result
 
         raise
