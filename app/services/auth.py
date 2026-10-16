@@ -1,4 +1,5 @@
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 
@@ -34,11 +35,17 @@ def register_user(
         password_hash=hash_password(data.password),
     )
 
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-
-    return user
+    try:
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return user
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email is already registered",
+        ) from exc
 
 
 def login_user(
@@ -51,9 +58,10 @@ def login_user(
         select(User).where(User.email == email)
     )
 
-    if not user or not verify_password(
-        data.password,
-        user.password_hash,
+    if (
+        not user
+        or not user.is_active
+        or not verify_password(data.password, user.password_hash)
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
