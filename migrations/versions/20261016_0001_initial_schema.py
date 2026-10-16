@@ -47,7 +47,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
         sa.ForeignKeyConstraint(["owner_id"], ["users.id"], ondelete="CASCADE"),
-        sa.UniqueConstraint("asset_id", name="uq_media_assets_asset_id"),
+        sa.UniqueConstraint("asset_id"),
     )
     op.create_index("ix_media_assets_owner_id", "media_assets", ["owner_id"])
     op.create_index("ix_media_assets_public_id", "media_assets", ["public_id"])
@@ -67,7 +67,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["avatar_media_id"], ["media_assets.id"], ondelete="SET NULL"
         ),
-        sa.UniqueConstraint("user_id", name="uq_user_profiles_user_id"),
+        sa.UniqueConstraint("user_id"),
     )
 
     op.create_table(
@@ -123,7 +123,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["relationship_id"], ["relationships.id"], ondelete="CASCADE"
         ),
-        sa.UniqueConstraint("relationship_id", name="uq_conversations_relationship_id"),
+        sa.UniqueConstraint("relationship_id"),
     )
 
     op.create_table(
@@ -175,7 +175,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["media_asset_id"], ["media_assets.id"], ondelete="RESTRICT"
         ),
-        sa.UniqueConstraint("media_asset_id", name="uq_message_attachments_media_asset_id"),
+        sa.UniqueConstraint("media_asset_id"),
     )
     op.create_index(
         "ix_message_attachments_message_id", "message_attachments", ["message_id"]
