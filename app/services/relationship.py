@@ -153,6 +153,7 @@ def create_relationship(
         relationship = Relationship(
             user_one_id=user_one_id,
             user_two_id=user_two_id,
+            requested_by_id=current_user.id,
             relationship_type=data.relationship_type.value,
             # ---- NEW: use the enum, not a hardcoded string ----
             status=RelationshipStatus.ACTIVE.value,
