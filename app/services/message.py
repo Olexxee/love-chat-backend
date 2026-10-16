@@ -1,11 +1,19 @@
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from fastapi.encoders import jsonable_encoder
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.models import MediaAsset, Message, MessageAttachment, User
+from app.db.models import (
+    Conversation,
+    DeliveryEvent,
+    MediaAsset,
+    Message,
+    MessageAttachment,
+    User,
+)
 from app.services.relationship import get_authorized_conversation
 
 
@@ -74,6 +82,50 @@ def _serialize_message(db: Session, message: Message) -> dict:
     }
 
 
+
+def _record_delivery_event(
+    db: Session,
+    conversation_id: int,
+    actor_id: int,
+    event_type: str,
+    payload: dict,
+    message_id: int | None = None,
+) -> int:
+    # Serialize event ID allocation per conversation. On PostgreSQL, the row
+    # lock makes committed event IDs a safe monotonically increasing cursor.
+    db.scalar(
+        select(Conversation)
+        .where(Conversation.id == conversation_id)
+        .with_for_update()
+    )
+    event = DeliveryEvent(
+        conversation_id=conversation_id,
+        actor_id=actor_id,
+        message_id=message_id,
+        event_type=event_type,
+        payload=jsonable_encoder(payload),
+    )
+    db.add(event)
+    db.flush()
+    return event.id
+
+
+def _event_id_for_message(
+    db: Session,
+    message_id: int,
+    event_type: str,
+) -> int | None:
+    return db.scalar(
+        select(DeliveryEvent.id)
+        .where(
+            DeliveryEvent.message_id == message_id,
+            DeliveryEvent.event_type == event_type,
+        )
+        .order_by(DeliveryEvent.id.desc())
+        .limit(1)
+    )
+
+
 def _find_by_client_message_id(
     db: Session,
     conversation_id: int,
@@ -124,7 +176,24 @@ def send_message(
         )
 
         if existing is not None:
-            return _serialize_message(db, existing)
+            result = _serialize_message(db, existing)
+            event_id = _event_id_for_message(db, existing.id, "message")
+            if event_id is None:
+                event_id = _record_delivery_event(
+                    db,
+                    conversation_id=conversation.id,
+                    actor_id=current_user.id,
+                    event_type="message",
+                    message_id=existing.id,
+                    payload={
+                        "type": "message",
+                        "message": result,
+                        "client_message_id": result["client_message_id"],
+                    },
+                )
+                db.commit()
+            result["event_id"] = event_id
+            return result
 
     if reply_to_message_id is not None:
         original = db.get(Message, reply_to_message_id)
@@ -198,7 +267,20 @@ def send_message(
 
         db.flush()
         result = _serialize_message(db, message)
+        event_id = _record_delivery_event(
+            db,
+            conversation_id=conversation.id,
+            actor_id=current_user.id,
+            event_type="message",
+            message_id=message.id,
+            payload={
+                "type": "message",
+                "message": result,
+                "client_message_id": result["client_message_id"],
+            },
+        )
         db.commit()
+        result["event_id"] = event_id
         return result
 
     except IntegrityError:
@@ -213,7 +295,24 @@ def send_message(
             )
 
             if existing is not None:
-                return _serialize_message(db, existing)
+                result = _serialize_message(db, existing)
+                event_id = _event_id_for_message(db, existing.id, "message")
+                if event_id is None:
+                    event_id = _record_delivery_event(
+                        db,
+                        conversation_id=conversation.id,
+                        actor_id=current_user.id,
+                        event_type="message",
+                        message_id=existing.id,
+                        payload={
+                            "type": "message",
+                            "message": result,
+                            "client_message_id": result["client_message_id"],
+                        },
+                    )
+                    db.commit()
+                result["event_id"] = event_id
+                return result
 
         raise
 
@@ -226,6 +325,8 @@ def get_messages(
     db: Session,
     current_user: User,
     conversation_id: int,
+    before_id: int | None = None,
+    limit: int = 50,
 ) -> list[dict]:
     conversation, _, _ = get_authorized_conversation(
         db,
@@ -233,11 +334,39 @@ def get_messages(
         conversation_id,
     )
 
+    if limit < 1 or limit > 100:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 100.")
+
+    statement = select(Message).where(Message.conversation_id == conversation.id)
+    if before_id is not None:
+        if before_id <= 0:
+            raise HTTPException(status_code=400, detail="before_id must be positive.")
+        anchor = db.scalar(
+            select(Message).where(
+                Message.id == before_id,
+                Message.conversation_id == conversation.id,
+            )
+        )
+        if anchor is None:
+            raise HTTPException(
+                status_code=400,
+                detail="before_id must identify a message in this conversation.",
+            )
+        statement = statement.where(
+            or_(
+                Message.created_at < anchor.created_at,
+                and_(
+                    Message.created_at == anchor.created_at,
+                    Message.id < anchor.id,
+                ),
+            )
+        )
+
+    # Fetch newest first for bounded queries, then return the page chronologically.
     messages = db.scalars(
-        select(Message)
-        .where(Message.conversation_id == conversation.id)
-        .order_by(Message.created_at.asc(), Message.id.asc())
+        statement.order_by(Message.created_at.desc(), Message.id.desc()).limit(limit)
     ).all()
+    messages.reverse()
 
     return [_serialize_message(db, message) for message in messages]
 
@@ -266,10 +395,30 @@ def mark_message_as_read(
 
     if message.read_at is None:
         message.read_at = datetime.now(timezone.utc)
+        result = _serialize_message(db, message)
+        event_id = _record_delivery_event(
+            db,
+            conversation_id=message.conversation_id,
+            actor_id=current_user.id,
+            event_type="message_read",
+            message_id=message.id,
+            payload={
+                "type": "message_read",
+                "message_id": message.id,
+                "reader_id": current_user.id,
+                "read_at": message.read_at.isoformat(),
+                "conversation_id": message.conversation_id,
+            },
+        )
         db.commit()
         db.refresh(message)
+        result = _serialize_message(db, message)
+        result["event_id"] = event_id
+        return result
 
-    return _serialize_message(db, message)
+    result = _serialize_message(db, message)
+    result["event_id"] = _event_id_for_message(db, message.id, "message_read")
+    return result
 
 
 def delete_message(
@@ -295,7 +444,22 @@ def delete_message(
         )
 
     message.deleted_at = datetime.now(timezone.utc)
+    result = _serialize_message(db, message)
+    event_id = _record_delivery_event(
+        db,
+        conversation_id=message.conversation_id,
+        actor_id=current_user.id,
+        event_type="message_deleted",
+        message_id=message.id,
+        payload={
+            "type": "message_deleted",
+            "message_id": message.id,
+            "conversation_id": message.conversation_id,
+            "deleted_at": message.deleted_at.isoformat(),
+        },
+    )
     db.commit()
     db.refresh(message)
-
-    return _serialize_message(db, message)
+    result = _serialize_message(db, message)
+    result["event_id"] = event_id
+    return result

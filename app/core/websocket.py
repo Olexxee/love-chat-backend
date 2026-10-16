@@ -63,10 +63,10 @@ def authenticate_websocket(
 
     user = db.scalar(select(User).where(User.id == user_id))
 
-    if not user:
+    if not user or not user.is_active:
         raise WebSocketException(
             code=status.WS_1008_POLICY_VIOLATION,
-            reason="User no longer exists",
+            reason="User is unavailable or inactive",
         )
 
     return user

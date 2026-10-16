@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 
@@ -11,6 +13,8 @@ from app.services.message import (
 )
 from app.services.relationship import get_authorized_conversation
 from app.services.websocket import manager
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["WebSocket"])
 
@@ -148,7 +152,12 @@ async def chat_websocket(
                     [user.id, partner.id],
                     {
                         "type": "message",
-                        "message": message,
+                        "event_id": message.get("event_id"),
+                        "message": {
+                            key: value
+                            for key, value in message.items()
+                            if key != "event_id"
+                        },
                         "client_message_id": message["client_message_id"],
                     },
                     conversation_id=conversation.id,
@@ -177,6 +186,7 @@ async def chat_websocket(
                     [user.id, partner.id],
                     {
                         "type": "message_deleted",
+                        "event_id": deleted_message.get("event_id"),
                         "message_id": deleted_message["id"],
                         "conversation_id": conversation.id,
                         "deleted_at": deleted_message["deleted_at"],
@@ -219,6 +229,7 @@ async def chat_websocket(
                     [user.id, partner.id],
                     {
                         "type": "message_read",
+                        "event_id": message.get("event_id"),
                         "message_id": message["id"],
                         "reader_id": user.id,
                         "read_at": (
@@ -255,6 +266,24 @@ async def chat_websocket(
                     "message": exc.detail,
                 }
             )
+
+    except Exception:
+        db.rollback()
+        logger.exception(
+            "Unexpected WebSocket processing failure for user_id=%s conversation_id=%s",
+            user.id if user else None,
+            conversation_id,
+        )
+        if connected:
+            try:
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "message": "The request could not be completed. Please retry.",
+                    }
+                )
+            except Exception:
+                pass
 
     finally:
         if connected and user:

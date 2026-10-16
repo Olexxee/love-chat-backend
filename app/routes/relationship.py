@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.security import get_current_user
@@ -10,6 +10,7 @@ from app.schemas.relationship import (
 )
 from app.services.relationship import (
     create_relationship,
+    end_relationship,
     get_relationship_by_id,
     list_relationships,
 )
@@ -58,3 +59,13 @@ def get_relationship_route(
         current_user,
         relationship_id,
     )
+
+
+@router.delete("/{relationship_id}", status_code=status.HTTP_204_NO_CONTENT)
+def end_relationship_route(
+    relationship_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    end_relationship(db, current_user, relationship_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
