@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -341,11 +341,30 @@ def get_messages(
     if before_id is not None:
         if before_id <= 0:
             raise HTTPException(status_code=400, detail="before_id must be positive.")
-        statement = statement.where(Message.id < before_id)
+        anchor = db.scalar(
+            select(Message).where(
+                Message.id == before_id,
+                Message.conversation_id == conversation.id,
+            )
+        )
+        if anchor is None:
+            raise HTTPException(
+                status_code=400,
+                detail="before_id must identify a message in this conversation.",
+            )
+        statement = statement.where(
+            or_(
+                Message.created_at < anchor.created_at,
+                and_(
+                    Message.created_at == anchor.created_at,
+                    Message.id < anchor.id,
+                ),
+            )
+        )
 
     # Fetch newest first for bounded queries, then return the page chronologically.
     messages = db.scalars(
-        statement.order_by(Message.id.desc()).limit(limit)
+        statement.order_by(Message.created_at.desc(), Message.id.desc()).limit(limit)
     ).all()
     messages.reverse()
 
