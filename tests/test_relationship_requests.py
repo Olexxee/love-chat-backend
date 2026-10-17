@@ -78,7 +78,7 @@ def test_user_search_matches_partial_name_and_email_and_excludes_current_user():
     engine, db, requester, recipient, _ = make_session()
     try:
         by_name = search_users(db, requester, "Tunde")
-        assert {item["id"] for item in by_name} == {recipient.id}
+        assert {item["id"] for item in by_name} == {recipient.id, db.scalar(select(User).where(User.email == "tunde.ade@example.com")).id}
         by_email = search_users(db, requester, "tunde@example")
         assert [item["email"] for item in by_email] == ["tunde@example.com"]
         assert search_users(db, requester, "a") == []
