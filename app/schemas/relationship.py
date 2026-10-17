@@ -21,13 +21,22 @@ class RelationshipResponse(BaseModel):
     id: int
     user_one_id: int
     user_two_id: int
+    requested_by_id: int
     relationship_type: RelationshipType
     status: str
     created_at: datetime
-    conversation_id: int
+    responded_at: datetime | None = None
+    conversation_id: int | None = None
     partner: RelationshipPartnerResponse
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class UserSearchResult(BaseModel):
+    id: int
+    name: str
+    email: str
+    avatar_url: str | None = None
 
 
 class ConversationResponse(BaseModel):
