@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.security import get_current_user
@@ -41,6 +41,7 @@ def search_relationship_users_route(
 )
 def create_relationship_route(
     data: CreateRelationshipRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -53,6 +54,7 @@ def create_relationship_route(
         title="New connection request",
         body=f"{current_user.name} sent you a connection request",
         data={"relationship_id": result["id"], "notification_type": "relationship"},
+        background_tasks=background_tasks,
     )
     return result
 
@@ -71,6 +73,7 @@ def list_relationships_route(
 )
 def accept_relationship_route(
     relationship_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -83,6 +86,7 @@ def accept_relationship_route(
         title="Connection request accepted",
         body=f"{current_user.name} accepted your connection request",
         data={"relationship_id": result["id"], "conversation_id": result["conversation_id"], "notification_type": "relationship"},
+        background_tasks=background_tasks,
     )
     return result
 
