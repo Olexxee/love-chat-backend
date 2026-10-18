@@ -3,7 +3,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.core.security import get_current_user
@@ -55,22 +55,16 @@ def list_notifications(
     if before_id is not None:
         query = query.where(Notification.id < before_id)
     items = db.scalars(query.order_by(Notification.id.desc()).limit(limit)).all()
-    unread_count = db.scalar(
-        select(Notification.id).where(
-            Notification.user_id == current_user.id,
-            Notification.read_at.is_(None),
-        ).limit(1)
-    )
-    count = len(db.scalars(
-        select(Notification.id).where(
+    count = db.scalar(
+        select(func.count(Notification.id)).where(
             Notification.user_id == current_user.id,
             Notification.read_at.is_(None),
         )
-    ).all())
+    ) or 0
     return {
         "items": [serialize_notification(item) for item in items],
         "unread_count": count,
-        "has_unread": unread_count is not None,
+        "has_unread": count > 0,
     }
 
 
