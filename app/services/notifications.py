@@ -1,13 +1,13 @@
 import json
 import logging
-from datetime import datetime, timezone
 from urllib.request import Request, urlopen
 
 from fastapi import BackgroundTasks
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import Notification, NotificationPreference, PushDevice, User
+from app.db.database import SessionLocal
+from app.db.models import Notification, NotificationPreference, PushDevice
 
 logger = logging.getLogger(__name__)
 EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
@@ -29,24 +29,41 @@ def _send_expo_push(tokens: list[str], title: str, body: str, data: dict) -> Non
         for token in tokens
     ]
     # Expo accepts batches. Keep each request comfortably below its limit.
+    invalid_tokens: list[str] = []
     for offset in range(0, len(messages), 100):
+        batch = messages[offset : offset + 100]
         request = Request(
             EXPO_PUSH_URL,
-            data=json.dumps(messages[offset : offset + 100]).encode("utf-8"),
+            data=json.dumps(batch).encode("utf-8"),
             headers={"Accept": "application/json", "Content-Type": "application/json"},
             method="POST",
         )
         try:
             with urlopen(request, timeout=4) as response:
                 result = json.loads(response.read().decode("utf-8"))
-            for ticket, message in zip(result.get("data", []), messages[offset : offset + 100]):
+            for ticket, message in zip(result.get("data", []), batch):
                 if ticket.get("status") == "error":
                     details = ticket.get("details") or {}
                     if details.get("error") == "DeviceNotRegistered":
-                        logger.info("Expo push token is no longer registered; it will be deactivated on next cleanup.")
+                        invalid_tokens.append(message["to"])
         except Exception:
             # Push is best-effort; do not fail chat delivery if Expo is unavailable.
             logger.exception("Expo push request failed")
+
+    if invalid_tokens:
+        session = SessionLocal()
+        try:
+            devices = session.query(PushDevice).filter(
+                PushDevice.expo_push_token.in_(invalid_tokens)
+            ).all()
+            for device in devices:
+                device.is_active = False
+            session.commit()
+        except Exception:
+            session.rollback()
+            logger.exception("Could not deactivate invalid Expo push tokens")
+        finally:
+            session.close()
 
 
 def create_notification(
