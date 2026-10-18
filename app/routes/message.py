@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.security import get_current_user
@@ -32,6 +32,7 @@ router = APIRouter(tags=["Messages"])
 async def send_message_route(
     conversation_id: int,
     data: CreateMessageRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -59,6 +60,7 @@ async def send_message_route(
         title=current_user.name,
         body="Sent you a message",
         data={"conversation_id": conversation.id, "notification_type": "message"},
+        background_tasks=background_tasks,
     )
 
     await manager.send_to_users(
