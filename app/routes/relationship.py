@@ -9,6 +9,7 @@ from app.schemas.relationship import (
     RelationshipResponse,
     UserSearchResult,
 )
+from app.services.notifications import create_notification
 from app.services.relationship import (
     create_relationship,
     end_relationship,
@@ -43,7 +44,17 @@ def create_relationship_route(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return create_relationship(db, current_user, data)
+    result = create_relationship(db, current_user, data)
+    create_notification(
+        db,
+        user_id=result["partner"]["id"],
+        actor_id=current_user.id,
+        notification_type="relationship",
+        title="New connection request",
+        body=f"{current_user.name} sent you a connection request",
+        data={"relationship_id": result["id"], "notification_type": "relationship"},
+    )
+    return result
 
 
 @router.get("", response_model=list[RelationshipResponse])
@@ -63,7 +74,17 @@ def accept_relationship_route(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return respond_to_relationship(db, current_user, relationship_id, accept=True)
+    result = respond_to_relationship(db, current_user, relationship_id, accept=True)
+    create_notification(
+        db,
+        user_id=result["partner"]["id"],
+        actor_id=current_user.id,
+        notification_type="relationship",
+        title="Connection request accepted",
+        body=f"{current_user.name} accepted your connection request",
+        data={"relationship_id": result["id"], "conversation_id": result["conversation_id"], "notification_type": "relationship"},
+    )
+    return result
 
 
 @router.post(
