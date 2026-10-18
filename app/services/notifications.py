@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timezone
 from urllib.request import Request, urlopen
 
+from fastapi import BackgroundTasks
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -57,6 +58,7 @@ def create_notification(
     title: str,
     body: str,
     data: dict | None = None,
+    background_tasks: BackgroundTasks | None = None,
 ) -> Notification:
     payload = data or {}
     notification = Notification(
@@ -92,7 +94,10 @@ def create_notification(
                 )
             ).all()
         )
-        _send_expo_push(tokens, title, body, payload)
+        if background_tasks is not None:
+            background_tasks.add_task(_send_expo_push, tokens, title, body, payload)
+        else:
+            _send_expo_push(tokens, title, body, payload)
 
     return notification
 
