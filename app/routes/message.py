@@ -19,6 +19,7 @@ from app.services.message import (
 )
 from app.services.relationship import get_authorized_conversation
 from app.services.websocket import manager
+from app.services.notifications import create_notification
 
 router = APIRouter(tags=["Messages"])
 
@@ -48,6 +49,16 @@ async def send_message_route(
         data.attachment_ids,
         data.client_message_id,
         data.reply_to_message_id,
+    )
+
+    create_notification(
+        db,
+        user_id=partner.id,
+        actor_id=current_user.id,
+        notification_type="message",
+        title=current_user.name,
+        body="Sent you a message",
+        data={"conversation_id": conversation.id, "notification_type": "message"},
     )
 
     await manager.send_to_users(
