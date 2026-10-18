@@ -40,7 +40,7 @@ PASSWORD_RESET_FROM_EMAIL = os.getenv(
 ).strip()
 PASSWORD_RESET_REDIRECT_URL = os.getenv(
     "PASSWORD_RESET_REDIRECT_URL",
-    "lovechat://auth/reset-password",
+    "lovechat://auth/new-password",
 ).strip()
 PASSWORD_RESET_EXPIRE_MINUTES = int(
     os.getenv("PASSWORD_RESET_EXPIRE_MINUTES", "30")
