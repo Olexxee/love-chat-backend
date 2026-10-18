@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import models  # Ensure SQLAlchemy models are registered
 from app.routes.auth import router as auth_router
+from app.routes.password_reset import router as password_reset_router
 from app.routes.media import router as media_router
 from app.routes.message import router as message_router
 from app.routes.relationship import router as relationship_router
@@ -35,6 +36,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(password_reset_router)
 app.include_router(media_router)
 app.include_router(relationship_router)
 app.include_router(message_router)
